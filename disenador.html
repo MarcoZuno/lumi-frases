@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel diseñador · Lumi Frases</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img class="logo-img" src="logo.png" alt="Lumi Frases" /></div>
+    <nav class="nav">
+      <a href="index.html">Inicio</a>
+      <a href="escritor.html">Enviar frase</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <div class="dash-head">
+      <div>
+        <h1 style="margin-bottom:4px">🎨 Frases por entregar</h1>
+        <span class="live-badge"><span class="live-dot"></span> En vivo · se actualiza solo</span>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="num" id="statPend">0</div><div class="lbl">Por entregar hoy</div></div>
+        <div class="stat"><div class="num" id="statDone">0</div><div class="lbl">Entregadas hoy</div></div>
+        <div class="stat"><div class="num" id="statAprob">0</div><div class="lbl">Aprobadas hoy</div></div>
+      </div>
+    </div>
+
+    <div id="lista"></div>
+    <div class="empty" id="empty" hidden>
+      <div class="big">📭</div>
+      <p>Aún no hay frases. Cuando lleguen, aparecerán aquí al instante.</p>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <div class="lightbox" id="lightbox"><img id="lightboxImg" alt="" /></div>
+  <input type="file" id="materialInput" accept="image/*,video/*" multiple hidden />
+
+  <!-- Sonido de aviso (tono corto generado en el navegador, sin archivo externo) -->
+  <script>
+    let frases = [];
+    const lista = document.getElementById("lista");
+    const empty = document.getElementById("empty");
+    const toast = document.getElementById("toast");
+    const lightbox = document.getElementById("lightbox");
+    const lightboxImg = document.getElementById("lightboxImg");
+
+    // --- Utilidades de fecha ---
+    function claveDia(iso) { return new Date(iso).toDateString(); }
+    function etiquetaDia(iso) {
+      const d = new Date(iso);
+      const hoy = new Date(); const ayer = new Date(); ayer.setDate(hoy.getDate() - 1);
+      if (d.toDateString() === hoy.toDateString()) return "Hoy";
+      if (d.toDateString() === ayer.toDateString()) return "Ayer";
+      return d.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
+    }
+    function hora(iso) {
+      return new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+    }
+    const esHoy = (iso) => new Date(iso).toDateString() === new Date().toDateString();
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    // Bloque de material entregado (miniaturas + descarga)
+    function materialHTML(f) {
+      if (!f.material || !f.material.length) return "";
+      const items = f.material.map((m) => {
+        const esImg = (m.tipo || "").startsWith("image/");
+        const esVid = (m.tipo || "").startsWith("video/");
+        const thumb = esImg
+          ? `<img src="${m.url}" alt="" onclick="abrirLightbox('${m.url}')" />`
+          : esVid
+          ? `<span class="mat-ic">🎬</span>`
+          : `<span class="mat-ic">📄</span>`;
+        return `<div class="mat-item">
+          ${thumb}
+          <a class="mat-dl" href="${m.url}" download="${esc(m.nombre)}" title="${esc(m.nombre)}">⬇︎ ${esc(m.nombre)}</a>
+        </div>`;
+      }).join("");
+      return `<div class="material"><div class="mat-lbl">📦 Material entregado</div>${items}</div>`;
+    }
+
+    // Estado de aprobación del escritor (lado del diseñador)
+    function revisionDesignerHTML(f) {
+      if (!f.material || !f.material.length) return "";
+      const r = f.revision || { estado: "pendiente" };
+      const autor = esc(f.autor || "el escritor");
+      if (r.estado === "aprobada") {
+        return `<div class="revision aprobada"><span class="rev-estado">✅ Aprobada por ${autor}</span></div>`;
+      }
+      if (r.estado === "ajustes") {
+        return `<div class="revision ajustes">
+          <span class="rev-estado">✏️ ${autor} pidió ajustes</span>
+          <div class="rev-coment"><span class="etq">Comentarios</span>${esc(r.comentarios)}</div>
+        </div>`;
+      }
+      return `<div class="revision pendiente"><span class="rev-estado">⏳ Esperando aprobación de ${autor}</span></div>`;
+    }
+
+    // --- Sonido de aviso ---
+    function beep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = "sine"; o.frequency.value = 660;
+        g.gain.setValueAtTime(0.001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        o.start(); o.stop(ctx.currentTime + 0.4);
+      } catch (e) {}
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.className = "toast show";
+      setTimeout(() => (toast.className = "toast"), 3500);
+    }
+
+    // --- Render ---
+    function render(idNueva) {
+      const pendHoy = frases.filter((f) => esHoy(f.createdAt) && f.estado === "pendiente").length;
+      const doneHoy = frases.filter((f) => esHoy(f.createdAt) && f.estado === "entregada").length;
+      const aprobHoy = frases.filter((f) => esHoy(f.createdAt) && f.revision && f.revision.estado === "aprobada").length;
+      document.getElementById("statPend").textContent = pendHoy;
+      document.getElementById("statDone").textContent = doneHoy;
+      document.getElementById("statAprob").textContent = aprobHoy;
+      document.title = pendHoy > 0 ? `(${pendHoy}) Lumi Frases` : "Panel diseñador · Lumi Frases";
+
+      empty.hidden = frases.length > 0;
+      lista.innerHTML = "";
+
+      // Agrupar por día (más reciente primero)
+      const grupos = {};
+      frases.forEach((f) => {
+        const k = claveDia(f.createdAt);
+        (grupos[k] = grupos[k] || []).push(f);
+      });
+      const clavesOrdenadas = Object.keys(grupos).sort(
+        (a, b) => new Date(b) - new Date(a)
+      );
+
+      clavesOrdenadas.forEach((k) => {
+        const items = grupos[k].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const pend = items.filter((f) => f.estado === "pendiente").length;
+
+        const group = document.createElement("section");
+        group.className = "day-group";
+        group.innerHTML = `<h2 class="day-title">${etiquetaDia(items[0].createdAt)}
+          <span class="count">${pend} pendiente${pend === 1 ? "" : "s"} · ${items.length} total</span></h2>
+          <div class="frases"></div>`;
+        const cont = group.querySelector(".frases");
+
+        items.forEach((f) => {
+          const card = document.createElement("article");
+          const revClase = f.material && f.material.length && f.revision ? " " + f.revision.estado : "";
+          card.className = "frase" + (f.estado === "entregada" ? " entregada" : "") + revClase + (f.id === idNueva ? " nueva" : "");
+          card.dataset.id = f.id;
+          const img = f.imagen
+            ? `<img class="img" src="${f.imagen}" alt="referencia" onclick="abrirLightbox('${f.imagen}')" />`
+            : `<div class="noimg">Sin imagen de referencia</div>`;
+          card.innerHTML = `
+            ${img}
+            <div class="body">
+              <span class="pill ${f.estado}">${f.estado}</span>
+              <div class="texto"></div>
+              <div class="meta"><span>${f.autor || "Anónimo"}</span><span>${hora(f.createdAt)}</span></div>
+              ${materialHTML(f)}
+              ${revisionDesignerHTML(f)}
+              <div class="acciones">
+                ${f.estado === "pendiente"
+                  ? `<button class="btn btn-sm" onclick="entregar('${f.id}')">📤 Entregar material</button>`
+                  : `<button class="btn btn-sm btn-ghost" onclick="entregar('${f.id}')">➕ Agregar material</button>
+                     <button class="link-btn" onclick="marcar('${f.id}','pendiente')">↩︎ Reabrir</button>`}
+                <button class="link-btn" onclick="eliminar('${f.id}')">Eliminar</button>
+              </div>
+            </div>`;
+          card.querySelector(".texto").textContent = f.texto;
+          cont.appendChild(card);
+        });
+        lista.appendChild(group);
+      });
+    }
+
+    // --- Entregar material (subir archivos) ---
+    const fileInput = document.getElementById("materialInput");
+    let entregandoId = null;
+    window.entregar = (id) => {
+      entregandoId = id;
+      fileInput.value = "";
+      fileInput.click();
+    };
+    fileInput.addEventListener("change", async () => {
+      if (!entregandoId || !fileInput.files.length) return;
+      const id = entregandoId;
+      const card = document.querySelector(`.frase[data-id="${id}"]`);
+      const btn = card && card.querySelector(".acciones .btn");
+      if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
+      try {
+        const data = new FormData();
+        [...fileInput.files].forEach((f) => data.append("material", f));
+        const res = await fetch(`/api/frases/${id}/material`, { method: "POST", body: data });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "No se pudo subir el material.");
+        }
+        showToast("✅ Material entregado");
+      } catch (e) {
+        showToast(e.message);
+        if (btn) { btn.disabled = false; }
+      }
+    });
+
+    // --- Acciones ---
+    window.marcar = async (id, estado) => {
+      await fetch("/api/frases/" + id, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado }),
+      });
+    };
+    window.eliminar = async (id) => {
+      if (!confirm("¿Eliminar esta frase?")) return;
+      await fetch("/api/frases/" + id, { method: "DELETE" });
+    };
+    window.abrirLightbox = (src) => {
+      lightboxImg.src = src; lightbox.classList.add("show");
+    };
+    lightbox.addEventListener("click", () => lightbox.classList.remove("show"));
+
+    // --- Carga inicial ---
+    async function cargar() {
+      const res = await fetch("/api/frases");
+      frases = await res.json();
+      render();
+    }
+
+    // --- Tiempo real (SSE) ---
+    function conectar() {
+      const ev = new EventSource("/api/stream");
+      ev.addEventListener("frase-nueva", (e) => {
+        const f = JSON.parse(e.data);
+        frases.unshift(f);
+        render(f.id);
+        beep();
+        showToast("☕ Nueva frase de " + (f.autor || "Anónimo"));
+      });
+      ev.addEventListener("frase-actualizada", (e) => {
+        const f = JSON.parse(e.data);
+        const i = frases.findIndex((x) => x.id === f.id);
+        const antesRev = i >= 0 && frases[i].revision ? frases[i].revision.estado : null;
+        if (i >= 0) frases[i] = f; else frases.unshift(f);
+        const ahoraRev = f.revision ? f.revision.estado : null;
+        if (ahoraRev !== antesRev) {
+          if (ahoraRev === "aprobada") { beep(); showToast("✅ " + (f.autor || "El escritor") + " aprobó el material"); }
+          else if (ahoraRev === "ajustes") { beep(); showToast("✏️ " + (f.autor || "El escritor") + " pidió ajustes"); }
+        }
+        render();
+      });
+      ev.addEventListener("frase-eliminada", (e) => {
+        const { id } = JSON.parse(e.data);
+        frases = frases.filter((x) => x.id !== id);
+        render();
+      });
+      ev.onerror = () => {}; // EventSource reintenta solo
+    }
+
+    cargar();
+    conectar();
+  </script>
+</body>
+</html>

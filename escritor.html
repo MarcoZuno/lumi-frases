@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enviar frase · Lumi Frases</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img class="logo-img" src="logo.png" alt="Lumi Frases" /></div>
+    <nav class="nav">
+      <a href="index.html">Inicio</a>
+      <a href="disenador.html">Panel diseñador</a>
+    </nav>
+  </header>
+
+  <main class="wrap wrap-narrow">
+    <h1>✍️ Nueva frase</h1>
+    <p class="subtitle">Escribe la frase y adjunta la imagen de referencia. El diseñador la verá al instante.</p>
+
+    <form id="form" class="card">
+      <label for="autor">Tu nombre <span style="font-weight:400;color:var(--cafe-300)">(opcional)</span></label>
+      <input type="text" id="autor" name="autor" placeholder="Ej. Marco" autocomplete="name" />
+
+      <label for="texto">Texto de la frase *</label>
+      <textarea id="texto" name="texto" placeholder="Ej. LUMIFRASE: Contigo sí, si quiero, si puedo, si me nace…" required></textarea>
+
+      <label>Imagen de referencia</label>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="imagen" name="imagen" accept="image/*" hidden />
+        <div id="dzText">
+          📷 Arrastra una imagen aquí o <strong>haz clic para elegir</strong>
+          <div class="hint">JPG, PNG · máx. 15 MB</div>
+        </div>
+        <img id="preview" alt="" hidden />
+      </div>
+
+      <button type="submit" class="btn btn-block" id="submitBtn">Enviar frase</button>
+    </form>
+
+    <section style="margin-top:36px">
+      <div class="dash-head">
+        <h2 style="margin:0">📥 Mis entregas</h2>
+        <span class="live-badge"><span class="live-dot"></span> En vivo · te avisamos aquí</span>
+      </div>
+      <p class="subtitle" style="margin-top:6px">Cuando el diseñador suba el material, aparecerá aquí listo para descargar.</p>
+      <div id="lista"></div>
+      <div class="empty" id="empty" hidden>
+        <div class="big">🕗</div>
+        <p>Aún no has enviado frases. Las que envíes aparecerán aquí con su estado.</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <div class="lightbox" id="lightbox"><img id="lightboxImg" alt="" /></div>
+
+  <script>
+    const form = document.getElementById("form");
+    const dz = document.getElementById("dropzone");
+    const input = document.getElementById("imagen");
+    const preview = document.getElementById("preview");
+    const dzText = document.getElementById("dzText");
+    const submitBtn = document.getElementById("submitBtn");
+    const toast = document.getElementById("toast");
+
+    function showToast(msg, isError) {
+      toast.textContent = msg;
+      toast.className = "toast show" + (isError ? " error" : "");
+      setTimeout(() => (toast.className = "toast"), 3200);
+    }
+
+    function setPreview(file) {
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+      preview.hidden = false;
+      dzText.hidden = true;
+    }
+
+    dz.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => setPreview(input.files[0]));
+
+    ["dragover", "dragenter"].forEach((e) =>
+      dz.addEventListener(e, (ev) => { ev.preventDefault(); dz.classList.add("drag"); })
+    );
+    ["dragleave", "drop"].forEach((e) =>
+      dz.addEventListener(e, (ev) => { ev.preventDefault(); dz.classList.remove("drag"); })
+    );
+    dz.addEventListener("drop", (ev) => {
+      const file = ev.dataTransfer.files[0];
+      if (file && file.type.startsWith("image/")) {
+        input.files = ev.dataTransfer.files;
+        setPreview(file);
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const texto = document.getElementById("texto").value.trim();
+      if (!texto) return showToast("Escribe el texto de la frase.", true);
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Enviando…";
+      try {
+        const data = new FormData(form);
+        const res = await fetch("/api/frases", { method: "POST", body: data });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "No se pudo enviar.");
+        }
+        form.reset();
+        preview.hidden = true;
+        dzText.hidden = false;
+        showToast("✅ ¡Frase enviada! El diseñador ya la recibió.");
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Enviar frase";
+      }
+    });
+
+    // ---------- Mis entregas (en vivo) ----------
+    let frases = [];
+    const lista = document.getElementById("lista");
+    const empty = document.getElementById("empty");
+    const lightbox = document.getElementById("lightbox");
+    const lightboxImg = document.getElementById("lightboxImg");
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const hora = (iso) => new Date(iso).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+
+    window.abrirLightbox = (src) => { lightboxImg.src = src; lightbox.classList.add("show"); };
+    lightbox.addEventListener("click", () => lightbox.classList.remove("show"));
+
+    function beep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = "sine"; o.frequency.value = 720;
+        g.gain.setValueAtTime(0.001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+        o.start(); o.stop(ctx.currentTime + 0.45);
+      } catch (e) {}
+    }
+
+    function materialHTML(f) {
+      if (!f.material || !f.material.length) return "";
+      const items = f.material.map((m) => {
+        const esImg = (m.tipo || "").startsWith("image/");
+        const thumb = esImg
+          ? `<img src="${m.url}" alt="" onclick="abrirLightbox('${m.url}')" />`
+          : `<span class="mat-ic">${(m.tipo || "").startsWith("video/") ? "🎬" : "📄"}</span>`;
+        return `<div class="mat-item">${thumb}
+          <a class="mat-dl" href="${m.url}" download="${esc(m.nombre)}" title="${esc(m.nombre)}">⬇︎ ${esc(m.nombre)}</a></div>`;
+      }).join("");
+      return `<div class="material"><div class="mat-lbl">📦 Material listo para descargar</div>${items}</div>`;
+    }
+
+    // Bloque de revisión/aprobación (lado del escritor)
+    function revisionWriterHTML(f) {
+      if (!f.material || !f.material.length) return "";
+      const r = f.revision || { estado: "pendiente" };
+      if (r.estado === "aprobada") {
+        return `<div class="revision aprobada"><span class="rev-estado">✅ Aprobaste esta pieza</span></div>`;
+      }
+      if (r.estado === "ajustes") {
+        return `<div class="revision ajustes">
+          <span class="rev-estado">✏️ Pediste ajustes</span>
+          <div class="rev-coment"><span class="etq">Tus comentarios</span>${esc(r.comentarios)}</div>
+          <div class="rev-acciones"><button class="btn btn-sm" onclick="aprobar('${f.id}')">✅ Aprobar de todos modos</button></div>
+        </div>`;
+      }
+      return `<div class="revision pendiente">
+        <span class="rev-estado">👀 ¿Apruebas esta pieza?</span>
+        <div class="rev-acciones">
+          <button class="btn btn-sm" onclick="aprobar('${f.id}')">✅ Aprobar</button>
+          <button class="btn btn-sm btn-ghost" onclick="toggleAjustes('${f.id}')">✏️ Pedir ajustes</button>
+        </div>
+        <div class="rev-form" id="form-${f.id}">
+          <textarea id="ajustes-${f.id}" placeholder="¿Qué hay que ajustar? Ej. cambiar el color del texto, corregir una palabra, otro tamaño…"></textarea>
+          <button class="btn btn-sm" onclick="enviarAjustes('${f.id}')">Enviar ajustes al diseñador</button>
+        </div>
+      </div>`;
+    }
+
+    window.aprobar = async (id) => {
+      const res = await fetch(`/api/frases/${id}/revision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "aprobada" }),
+      });
+      if (res.ok) showToast("✅ ¡Pieza aprobada! El diseñador ya lo sabe.");
+    };
+    window.toggleAjustes = (id) => {
+      const el = document.getElementById("form-" + id);
+      if (el) el.classList.toggle("show");
+    };
+    window.enviarAjustes = async (id) => {
+      const ta = document.getElementById("ajustes-" + id);
+      const comentarios = (ta && ta.value || "").trim();
+      if (!comentarios) return showToast("Escribe qué hay que ajustar.", true);
+      const res = await fetch(`/api/frases/${id}/revision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "ajustes", comentarios }),
+      });
+      if (res.ok) showToast("✏️ Ajustes enviados al diseñador.");
+      else { const e = await res.json().catch(() => ({})); showToast(e.error || "Error", true); }
+    };
+
+    function render() {
+      empty.hidden = frases.length > 0;
+      lista.innerHTML = "";
+      const cont = document.createElement("div");
+      cont.className = "frases";
+      frases
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .forEach((f) => {
+          const card = document.createElement("article");
+          card.className = "frase" + (f.estado === "entregada" ? " entregada" : "");
+          const img = f.imagen
+            ? `<img class="img" src="${f.imagen}" alt="" onclick="abrirLightbox('${f.imagen}')" />`
+            : `<div class="noimg">Sin imagen de referencia</div>`;
+          card.innerHTML = `${img}
+            <div class="body">
+              <span class="pill ${f.estado}">${f.estado === "entregada" ? "✅ entregada" : "⏳ pendiente"}</span>
+              <div class="texto"></div>
+              <div class="meta"><span>${esc(f.autor || "Anónimo")}</span><span>${hora(f.createdAt)}</span></div>
+              ${materialHTML(f)}
+              ${revisionWriterHTML(f)}
+            </div>`;
+          card.querySelector(".texto").textContent = f.texto;
+          cont.appendChild(card);
+        });
+      lista.appendChild(cont);
+    }
+
+    async function cargar() {
+      const res = await fetch("/api/frases");
+      frases = await res.json();
+      render();
+    }
+
+    function conectar() {
+      const ev = new EventSource("/api/stream");
+      ev.addEventListener("frase-nueva", (e) => {
+        frases.unshift(JSON.parse(e.data));
+        render();
+      });
+      ev.addEventListener("frase-actualizada", (e) => {
+        const f = JSON.parse(e.data);
+        const i = frases.findIndex((x) => x.id === f.id);
+        const antes = i >= 0 ? (frases[i].material || []).length : 0;
+        if (i >= 0) frases[i] = f; else frases.unshift(f);
+        const ahora = (f.material || []).length;
+        if (ahora > antes && f.estado === "entregada") {
+          beep();
+          showToast("🎉 ¡Listo! Ya puedes descargar el material de tu frase.");
+        }
+        render();
+      });
+      ev.addEventListener("frase-eliminada", (e) => {
+        const { id } = JSON.parse(e.data);
+        frases = frases.filter((x) => x.id !== id);
+        render();
+      });
+    }
+
+    cargar();
+    conectar();
+  </script>
+</body>
+</html>
