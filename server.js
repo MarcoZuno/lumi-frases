@@ -33,6 +33,35 @@ function guardarFrases(frases) {
   fs.writeFileSync(DB_FILE, JSON.stringify(frases, null, 2));
 }
 
+// --- Limpieza automática ---------------------------------------------------
+// Cada frase (con su imagen y material) se borra sola después de N días.
+// Configurable con la variable de entorno RETENTION_DAYS (por defecto 7).
+const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 7);
+
+function limpiarViejas() {
+  const limiteMs = RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const ahora = Date.now();
+  const frases = leerFrases();
+  const vivas = [];
+  const borradas = [];
+  for (const f of frases) {
+    const edad = ahora - new Date(f.createdAt).getTime();
+    if (edad > limiteMs) borradas.push(f);
+    else vivas.push(f);
+  }
+  if (borradas.length === 0) return;
+
+  const borrarArchivo = (url) =>
+    fs.promises.unlink(path.join(UPLOADS_DIR, path.basename(url))).catch(() => {});
+  borradas.forEach((f) => {
+    if (f.imagen) borrarArchivo(f.imagen);
+    (f.material || []).forEach((m) => borrarArchivo(m.url));
+  });
+  guardarFrases(vivas);
+  borradas.forEach((f) => enviarEvento("frase-eliminada", { id: f.id }));
+  console.log(`🧹 Limpieza: ${borradas.length} frase(s) de +${RETENTION_DAYS} días eliminada(s).`);
+}
+
 // --- Tiempo real con Server-Sent Events -----------------------------------
 let clientes = []; // conexiones abiertas del/los panel(es) de diseñador
 
@@ -69,10 +98,10 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB (permite videos cortos mp4/mov)
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("El archivo debe ser una imagen."));
+    if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) cb(null, true);
+    else cb(new Error("El archivo debe ser una imagen o un video."));
   },
 });
 
@@ -213,8 +242,12 @@ app.use((err, req, res, next) => {
   next();
 });
 
+// Limpieza al arrancar y cada 6 horas.
+limpiarViejas();
+setInterval(limpiarViejas, 6 * 60 * 60 * 1000);
+
 app.listen(PORT, () => {
-  console.log(`\n  ☕  Lumi Frases corriendo`);
+  console.log(`\n  ☕  Lumi Frases corriendo (auto-borrado a los ${RETENTION_DAYS} días)`);
   console.log(`  → Inicio:    http://localhost:${PORT}`);
   console.log(`  → Escritor:  http://localhost:${PORT}/escritor.html`);
   console.log(`  → Diseñador: http://localhost:${PORT}/disenador.html\n`);

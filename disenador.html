@@ -62,17 +62,18 @@
     }
     const esHoy = (iso) => new Date(iso).toDateString() === new Date().toDateString();
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const esVideo = (url) => /\.(mp4|webm|mov|m4v|ogg)$/i.test(url || "");
 
     // Bloque de material entregado (miniaturas + descarga)
     function materialHTML(f) {
       if (!f.material || !f.material.length) return "";
       const items = f.material.map((m) => {
-        const esImg = (m.tipo || "").startsWith("image/");
-        const esVid = (m.tipo || "").startsWith("video/");
-        const thumb = esImg
+        const esVid = (m.tipo || "").startsWith("video/") || esVideo(m.url);
+        const esImg = (m.tipo || "").startsWith("image/") || /\.(jpe?g|png|gif|webp)$/i.test(m.url);
+        const thumb = esVid
+          ? `<video src="${m.url}" muted playsinline onclick="abrirLightbox('${m.url}')"></video>`
+          : esImg
           ? `<img src="${m.url}" alt="" onclick="abrirLightbox('${m.url}')" />`
-          : esVid
-          ? `<span class="mat-ic">🎬</span>`
           : `<span class="mat-ic">📄</span>`;
         return `<div class="mat-item">
           ${thumb}
@@ -159,8 +160,10 @@
           card.className = "frase" + (f.estado === "entregada" ? " entregada" : "") + revClase + (f.id === idNueva ? " nueva" : "");
           card.dataset.id = f.id;
           const img = f.imagen
-            ? `<img class="img" src="${f.imagen}" alt="referencia" onclick="abrirLightbox('${f.imagen}')" />`
-            : `<div class="noimg">Sin imagen de referencia</div>`;
+            ? (esVideo(f.imagen)
+                ? `<video class="img" src="${f.imagen}" muted playsinline onclick="abrirLightbox('${f.imagen}')"></video>`
+                : `<img class="img" src="${f.imagen}" alt="referencia" onclick="abrirLightbox('${f.imagen}')" />`)
+            : `<div class="noimg">Sin imagen ni video de referencia</div>`;
           card.innerHTML = `
             ${img}
             <div class="body">
@@ -226,9 +229,14 @@
       await fetch("/api/frases/" + id, { method: "DELETE" });
     };
     window.abrirLightbox = (src) => {
-      lightboxImg.src = src; lightbox.classList.add("show");
+      lightbox.innerHTML = esVideo(src)
+        ? `<video src="${src}" controls autoplay playsinline></video>`
+        : `<img src="${src}" alt="" />`;
+      lightbox.classList.add("show");
     };
-    lightbox.addEventListener("click", () => lightbox.classList.remove("show"));
+    lightbox.addEventListener("click", (e) => {
+      if (e.target === lightbox) { lightbox.classList.remove("show"); lightbox.innerHTML = ""; }
+    });
 
     // --- Carga inicial ---
     async function cargar() {

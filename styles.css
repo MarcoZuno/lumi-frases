@@ -106,7 +106,7 @@ textarea { min-height: 110px; }
   transition: background 0.15s, border-color 0.15s;
 }
 .dropzone.drag { background: var(--gris-100); border-color: var(--neg); }
-.dropzone img { max-height: 220px; max-width: 100%; border-radius: 10px; margin-top: 10px; }
+.dropzone img, .dropzone video { max-height: 220px; max-width: 100%; border-radius: 10px; margin-top: 10px; }
 .dropzone .hint { font-size: 0.85rem; opacity: 0.8; }
 
 .btn {
@@ -245,9 +245,9 @@ textarea { min-height: 110px; }
 }
 .mat-lbl { font-size: 0.78rem; font-weight: 700; color: var(--neg); }
 .mat-item { display: flex; align-items: center; gap: 10px; }
-.mat-item img {
+.mat-item img, .mat-item video {
   width: 42px; height: 42px; object-fit: cover; border-radius: 8px; cursor: zoom-in; flex-shrink: 0;
-  border: 1px solid var(--gris-200);
+  border: 1px solid var(--gris-200); background: #000;
 }
 .mat-ic { font-size: 1.6rem; width: 42px; text-align: center; flex-shrink: 0; }
 .mat-dl {
@@ -283,7 +283,7 @@ textarea { min-height: 110px; }
   display: none; align-items: center; justify-content: center; z-index: 100; padding: 30px;
 }
 .lightbox.show { display: flex; }
-.lightbox img { max-width: 95%; max-height: 92%; border-radius: 10px; }
+.lightbox img, .lightbox video { max-width: 95%; max-height: 92%; border-radius: 10px; }
 
 @media (max-width: 620px) {
   .roles { grid-template-columns: 1fr; }
